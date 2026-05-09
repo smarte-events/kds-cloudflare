@@ -47,6 +47,26 @@ export default {
       return handleAPI(request, env, url, method);
     }
 
+    // /manifest.json – PWA Manifest für Homescreen-Installation
+    if (url.pathname === '/manifest.json') {
+      const manifest = {
+        name: 'KDS Monitor',
+        short_name: 'KDS',
+        start_url: '/',
+        display: 'fullscreen',
+        background_color: '#0d0d0d',
+        theme_color: '#0d0d0d',
+        orientation: 'any',
+        icons: [
+          { src: 'https://kds.team24.training/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'https://kds.team24.training/icon-512.png', sizes: '512x512', type: 'image/png' }
+        ]
+      };
+      return new Response(JSON.stringify(manifest), {
+        headers: { ...CORS, 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' }
+      });
+    }
+
     // /app.js - JavaScript als separate Datei
     if (url.pathname === '/app.js') {
       return new Response(appJs, {
