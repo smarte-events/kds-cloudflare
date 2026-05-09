@@ -71,7 +71,7 @@ async function handleAPI(request, env, url, method) {
       requireApiKey(request, env);
       const ticket = await createTicket(env, await request.json());
       await broadcastUpdate(env, ticket.station_id, { type: 'ticket_created', ticket });
-      await broadcastUpdate(env, ticket.station_id, { type: 'print_job', stationId: ticket.station_id });
+      // Kein automatischer print_job beim Erstellen – nur manuell via Drucken-Button
       return jsonResponse(ticket, 201);
     }
 
