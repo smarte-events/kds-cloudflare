@@ -19,6 +19,19 @@ function fmtTime(date) {
   });
 }
 
+// ─── Dauer formatieren: "2 Std 1 Min 23 Sek" (kleinste Einheiten weglassen wenn 0) ──
+function formatDauer(totalSec) {
+  totalSec = Math.max(0, Math.round(totalSec));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const parts = [];
+  if (h > 0) parts.push(h + ' Std');
+  if (m > 0 || h > 0) parts.push(m + ' Min');
+  parts.push(s + ' Sek');
+  return parts.join(' ');
+}
+
 // DNS-Override: kds.team24.training direkt auf Cloudflare Worker IP mappen
 // Umgeht DNS-Auflösungsprobleme im lokalen Netz (Worker hat kein A-Record)
 const dns = require('dns');
@@ -635,8 +648,7 @@ function buildTicketBuffer(p) {
   line();
   parts.push(escBuf(ESC, 0x61, 0x00));     // Links
   const durationSec = Math.round((printTime - orderTime) / 1000);
-  const durationFmt = Math.floor(durationSec/60) + ':' + String(durationSec%60).padStart(2,'0');
-  txt(`DAUER: ${durationFmt}`);
+  txt(`DAUER: ${formatDauer(durationSec)}`);
   txt(`BIS GEDRUCKT UM: ${fmtTime(printTime)}`);
   br(); br(); br();
   parts.push(escBuf(GS, 0x56, 0x42, 0x00)); // Vollschnitt
@@ -835,11 +847,11 @@ async function pollJobs() {
           var printTime = fmtTime(now);
           // Eingangszeit aus job.payload (created_at des Tickets)
           var incomingTime = '';
-          var durationMin = 0;
+          var dauerStr = '';
           if (job.payload.created_at) {
             var inDate = new Date(job.payload.created_at);
             incomingTime = fmtTime(inDate);
-            durationMin = Math.round((now - inDate) / 60000);
+            dauerStr = formatDauer((now - inDate) / 1000);
           }
           // Gedruckte Artikel (die jetzt gedruckt werden)
           var printedItems = (job.payload.items||[])
@@ -861,7 +873,7 @@ async function pollJobs() {
             printedItems + NL +
             (hasAllItems ? ('---' + NL + (job.payload.is_last ? 'DER REST VON' : 'EIN TEIL VON') + NL + '---' + NL + allItemsText + NL) : '') +
             '---' + NL +
-            'DAUER: ' + durationMin + ' min' + NL +
+            'DAUER: ' + (dauerStr || '0 Sek') + NL +
             'BIS GEDRUCKT UM: ' + printTime;
           console.log('[BON-LOG-OUT] Speichere:', outPreview.substring(0,80));
           fetch(CFG.workerUrl + '/api/bon-log', {
