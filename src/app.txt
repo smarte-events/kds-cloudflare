@@ -4,6 +4,22 @@ const S={view:'orders',tickets:[],totals:[],ws:null,prev:{},sel:{}};
 (function(){var h=location.hostname.split('.')[0];if(h==='monitor2')S.station='2';else if(h==='monitor1')S.station='1';})();
 let curRot='landscape';
 
+// ─── STORNO-Styles: rote Hintergrundfarbe + Badge injizieren ───────────
+(function injectStornoStyles(){
+  if(document.getElementById('storno-styles')) return;
+  var s=document.createElement('style');
+  s.id='storno-styles';
+  s.textContent=
+    '.tc.storno{background:rgba(239,68,68,0.18) !important;border:2px solid #ef4444 !important;box-shadow:0 0 12px rgba(239,68,68,0.25)}'+
+    '.tc.storno .tc-num,.tc.storno .tc-tbl{color:#dc2626}'+
+    '.storno-badge{display:inline-block;background:#dc2626;color:#fff;font-weight:800;font-size:13px;letter-spacing:0.08em;padding:3px 10px;border-radius:4px;margin-right:8px;text-transform:uppercase;animation:stornoPulse 2s ease-in-out infinite}'+
+    '@keyframes stornoPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.7)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}'+
+    '.t-item.korr{background:rgba(239,68,68,0.12);border-left:3px solid #dc2626}'+
+    '.t-item.korr .t-qty{color:#dc2626;font-weight:800}'+
+    '.t-item.korr .t-name{color:#dc2626;font-weight:700}';
+  document.head.appendChild(s);
+})();
+
 // ─── Drucker-Konfiguration ───────────────────────────────────────────────
 const API_KEY = 'kds-smarte-events-2026';
 
@@ -403,24 +419,43 @@ async function vpLoad(){
       var t=new Date(b.created_at);
       var ts=t.toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
       var badge=VP.type==='in'?'<span class="bon-badge2 in">EINGANG</span>':'<span class="bon-badge2 out">AUSGANG</span>';
-      var lines=(b.preview||'').split(NL);
+      // Storno erkennen: "Korr:" oder "*** STORNO ***" oder "STORNO " im preview
+      var prev=b.preview||'';
+      var isStorno=/Korr(?:ektur)?:|^\*\*\* ?STORNO|STORNO\s+-?\d/m.test(prev);
+      var stornoStyle=isStorno?'border:2px solid #ef4444;background:rgba(239,68,68,0.06)':'';
+      var stornoBadgeHtml=isStorno?'<div style="text-align:center;background:#dc2626;color:#fff;font-weight:800;letter-spacing:0.1em;padding:4px;margin:-8px -8px 6px -8px;border-radius:4px 4px 0 0">*** STORNO ***</div>':'';
+      var lines=prev.split(NL);
       var bodyHtml=lines.map(function(l){
         var esc=l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         if(!esc.trim()) return '';
         if(esc==='---' || esc.match(/^[-=]{3,}$/)) return '<hr style="border:none;border-top:1px dashed #bbb;margin:4px 0">';
         if(esc==='EIN TEIL VON' || esc==='DER REST VON') return '<div style="text-align:center;font-weight:700;font-size:13px;padding:3px 0;letter-spacing:.05em">'+esc+'</div>';
+        if(esc==='*** STORNO ***' || esc.match(/^\*\*\* ?STORNO/i)) return ''; // wird oben als Banner gerendert
         if(esc.indexOf('## ')===0){
           var itemTxt=esc.slice(3).trim();
-          var mI=itemTxt.match(/(\d+)[x]?\s+(.+)/);
-          if(mI) return '<div style="font-weight:700;font-size:14px;padding:2px 0">'+mI[1]+'x&nbsp; '+mI[2]+'</div>';
+          // Storno-Item erkennen: "STORNO -1x ..." oder "-1x ..."
+          var stornoMatch=itemTxt.match(/^(?:STORNO\s+)?(-?\d+)x?\s+(.+)/);
+          if(stornoMatch){
+            var qty=stornoMatch[1];
+            var name=stornoMatch[2];
+            if(parseInt(qty)<0 || /^STORNO/i.test(itemTxt)){
+              return '<div style="font-weight:800;font-size:14px;padding:3px 0;color:#dc2626;background:rgba(239,68,68,0.1);border-left:3px solid #dc2626;padding-left:8px">STORNO '+qty+'x&nbsp; '+name+'</div>';
+            }
+            return '<div style="font-weight:700;font-size:14px;padding:2px 0">'+qty+'x&nbsp; '+name+'</div>';
+          }
           return '<div style="font-weight:700;font-size:14px;padding:2px 0">'+itemTxt+'</div>';
+        }
+        // "Korr: -1 Toast" Zeile (eingehender Bon)
+        if(/^Korr(?:ektur)?:/i.test(esc)){
+          return '<div style="font-weight:800;font-size:14px;padding:3px 0;color:#dc2626;background:rgba(239,68,68,0.1);border-left:3px solid #dc2626;padding-left:8px">'+esc+'</div>';
         }
         if(esc.indexOf('BONIERT:')===0 || esc.indexOf('DAUER:')===0 || esc.indexOf('BIS GEDRUCKT')===0)
           return '<div style="font-family:monospace;font-size:11px;color:#555;padding:1px 0">'+esc+'</div>';
         return '<div class="bon-raw-line">'+esc+'</div>';
       }).join('');
-      return '<div class="bon-card" style="position:relative">'+
+      return '<div class="bon-card" style="position:relative;'+stornoStyle+'">'+
         '<button class="bon-del2" style="position:absolute;top:6px;right:6px;z-index:1;background:#e8e5dd80;border-radius:50%;width:22px;height:22px;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" onclick="vpDelete('+b.id+')" title="Loeschen">&times;</button>'+
+        stornoBadgeHtml+
         '<div class="bon-body2">'+bodyHtml+'</div>'+
         '<div class="bon-cut"></div>'+
       '</div>';
@@ -460,21 +495,28 @@ function rOrders(){
     // Pin-Farbe: höchstpriorisiertes gepinntes Produkt im Bon
     const pinMatch=t.items.map(i=>PINS[i.product_name]).filter(Boolean).sort((a,b)=>a.slot-b.slot)[0];
     const pinColor=pinMatch&&pinMatch.color?pinMatch.color:null;
+    // STORNO-Erkennung: Ticket-Flag ODER irgendein Item mit negativer Menge / Korrektur-Flag
+    const isStorno = !!t.is_korrektur || (t.items||[]).some(i => i.is_korrektur || (typeof i.quantity === 'number' && i.quantity < 0));
     const card=document.createElement('div');
-    card.className='tc'+(t.status==='printing'?' printing':'');
+    card.className='tc'+(t.status==='printing'?' printing':'')+(isStorno?' storno':'');
     card.id='card-'+t.id;
 
     const itemsHtml=t.items.map((i,idx)=>{
       const k=t.id+'-'+idx; const sq=S.sel[k]||0;
-      const done=i.quantity<=0;
-      const cls='t-item'+(done?' done':sq>0?' sel':'');
+      const done=i.quantity<=0 && !i.is_korrektur;  // negative qty NICHT als done werten bei Storno
+      const isItemKorr=!!i.is_korrektur || (typeof i.quantity === 'number' && i.quantity < 0);
+      const cls='t-item'+(done?' done':sq>0?' sel':'')+(isItemKorr?' korr':'');
       const badge=sq>0?'<span class="sel-badge">'+sq+'</span>':'';
       const extras=i.extras&&i.extras.length?'<div class="t-extras">'+i.extras.map(e=>'<span class="t-extra">'+e+'</span>').join('')+'</div>':'';
       const click=done?'':' onclick="selItem('+t.id+','+idx+','+i.quantity+')"';
-      return '<div class="'+cls+'"'+click+'><div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap"><span class="t-qty">'+i.quantity+'×</span><span class="t-name">'+i.product_name+'</span>'+badge+'</div>'+extras+'</div>';
+      const qtyDisplay=isItemKorr?(i.quantity+'×'):(i.quantity+'×');
+      const stornoMark=isItemKorr?'<span style="color:#dc2626;font-weight:800;margin-right:4px">STORNO</span>':'';
+      return '<div class="'+cls+'"'+click+'><div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">'+stornoMark+'<span class="t-qty">'+qtyDisplay+'</span><span class="t-name">'+i.product_name+'</span>'+badge+'</div>'+extras+'</div>';
     }).join('');
     const hasSel=t.items.some((_,idx)=>(S.sel[t.id+'-'+idx]||0)>0);
-    card.innerHTML='<div class="tc-head"><div><div class="tc-num">#'+t.ticket_number+'</div><div class="tc-tbl">'+(t.table_number?t.table_number:'Bon #'+t.ticket_number)+'</div></div><div style="display:flex;align-items:center;gap:6px"><span class="tc-wait '+urg+'">'+t.wait_mins+'min</span>'+(t.station_color?'<span class="s-badge" style="background:'+t.station_color+'22;color:'+t.station_color+';border:1px solid '+t.station_color+'44">'+t.station_name+'</span>':'')+'</div></div><div class="tc-items">'+itemsHtml+'</div><div class="tc-foot"><button class="btn-p" onclick="prt('+t.id+')" '+(t.status==='printing'?'disabled':'')+'>🖨 '+(t.status==='printing'?'Druckt…':'Drucken')+'</button><button class="btn-partial" id="bp-'+t.id+'" onclick="partPrt('+t.id+')" '+(hasSel?'':'disabled')+'>✂ Teildruck</button></div>';
+    // STORNO-Badge im Header wenn Storno-Bon
+    const stornoBadge=isStorno?'<span class="storno-badge">⚠ STORNO</span>':'';
+    card.innerHTML='<div class="tc-head"><div>'+stornoBadge+'<div class="tc-num">#'+t.ticket_number+'</div><div class="tc-tbl">'+(t.table_number?t.table_number:'Bon #'+t.ticket_number)+'</div></div><div style="display:flex;align-items:center;gap:6px"><span class="tc-wait '+urg+'">'+t.wait_mins+'min</span>'+(t.station_color?'<span class="s-badge" style="background:'+t.station_color+'22;color:'+t.station_color+';border:1px solid '+t.station_color+'44">'+t.station_name+'</span>':'')+'</div></div><div class="tc-items">'+itemsHtml+'</div><div class="tc-foot"><button class="btn-p" onclick="prt('+t.id+')" '+(t.status==='printing'?'disabled':'')+'>🖨 '+(t.status==='printing'?'Druckt…':'Drucken')+'</button><button class="btn-partial" id="bp-'+t.id+'" onclick="partPrt('+t.id+')" '+(hasSel?'':'disabled')+'>✂ Teildruck</button></div>';
     g.appendChild(card);
   });
   ta.innerHTML='';ta.appendChild(g);
@@ -600,12 +642,14 @@ function selItem(tid,idx,maxQty){
   const itemsDiv=card.querySelector('.tc-items');
   itemsDiv.innerHTML=t.items.map((i,i2)=>{
     const sk=tid+'-'+i2; const sq=S.sel[sk]||0;
-    const done=i.quantity<=0;
-    const cls='t-item'+(done?' done':sq>0?' sel':'');
+    const done=i.quantity<=0 && !i.is_korrektur;
+    const isItemKorr=!!i.is_korrektur || (typeof i.quantity === 'number' && i.quantity < 0);
+    const cls='t-item'+(done?' done':sq>0?' sel':'')+(isItemKorr?' korr':'');
     const badge=sq>0?'<span class="sel-badge">'+sq+'</span>':'';
     const extras=i.extras&&i.extras.length?'<div class="t-extras">'+i.extras.map(e=>'<span class="t-extra">'+e+'</span>').join('')+'</div>':'';
     const click=done?'':' onclick="selItem('+tid+','+i2+','+i.quantity+')"';
-    return '<div class="'+cls+'"'+click+'><div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap"><span class="t-qty">'+i.quantity+'×</span><span class="t-name">'+i.product_name+'</span>'+badge+'</div>'+extras+'</div>';
+    const stornoMark=isItemKorr?'<span style="color:#dc2626;font-weight:800;margin-right:4px">STORNO</span>':'';
+    return '<div class="'+cls+'"'+click+'><div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">'+stornoMark+'<span class="t-qty">'+i.quantity+'×</span><span class="t-name">'+i.product_name+'</span>'+badge+'</div>'+extras+'</div>';
   }).join('');
   const hasSel=t.items.some((_,i2)=>(S.sel[tid+'-'+i2]||0)>0);
   const bp=document.getElementById('bp-'+tid);if(bp)bp.disabled=!hasSel;
@@ -830,4 +874,3 @@ async function vInit() {
 }
 vInit();
 setInterval(function(){ if(S.view==='virtual') vLoadBons(); },5000);
-
