@@ -14,6 +14,15 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
 };
 
+// ─── Schema-Migrationen: is_korrektur Spalten sicherstellen ──────────────
+// Lazy: lauft beim ersten createTicket; harmless wenn schon vorhanden.
+async function ensureKorrekturColumns(env) {
+  // Auf Tickets-Ebene
+  await env.DB.prepare('ALTER TABLE tickets ADD COLUMN is_korrektur INTEGER DEFAULT 0').run().catch(()=>{});
+  // Auf Item-Ebene (fuer Mischbons: ein Ticket mit Storno + normalem Item)
+  await env.DB.prepare('ALTER TABLE ticket_items ADD COLUMN is_korrektur INTEGER DEFAULT 0').run().catch(()=>{});
+}
+
 async function cleanupOldData(env) {
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').substring(0, 19);
   // Reihenfolge: print_jobs → bon_log → ticket_items → tickets (FK-Abhängigkeiten)
@@ -501,14 +510,18 @@ async function getStations(env) {
 }
 
 async function getTickets(env, stationId) {
-  let query = `SELECT t.*, COALESCE(t.kellner, s.name, 'Kellner') as station_name, s.color as station_color FROM tickets t LEFT JOIN stations s ON t.station_id = s.id WHERE t.status != 'done'`;
+  // Migration sicherstellen (idempotent)
+  await ensureKorrekturColumns(env);
+  // is_korrektur DESC: Storno-Bons zuerst, dann nach Zeit aufsteigend.
+  // COALESCE schuetzt falls Spalte noch fehlt (existing Tickets ohne Wert)
+  let query = `SELECT t.*, COALESCE(t.is_korrektur, 0) as is_korrektur, COALESCE(t.kellner, s.name, 'Kellner') as station_name, s.color as station_color FROM tickets t LEFT JOIN stations s ON t.station_id = s.id WHERE t.status != 'done'`;
   const params = [];
   if (stationId) { query += ' AND t.station_id = ?'; params.push(stationId); }
-  query += ' ORDER BY t.created_at ASC';
+  query += ' ORDER BY COALESCE(t.is_korrektur, 0) DESC, t.created_at ASC';
   const { results: tickets } = await env.DB.prepare(query).bind(...params).all();
   if (!tickets.length) return [];
   const ids = tickets.map(t => t.id);
-  const { results: allItems } = await env.DB.prepare('SELECT * FROM ticket_items WHERE ticket_id IN (' + ids.map(() => '?').join(',') + ')').bind(...ids).all();
+  const { results: allItems } = await env.DB.prepare('SELECT *, COALESCE(is_korrektur, 0) as is_korrektur FROM ticket_items WHERE ticket_id IN (' + ids.map(() => '?').join(',') + ')').bind(...ids).all();
   const itemsByTicket = {};
   for (const item of allItems) {
     if (!itemsByTicket[item.ticket_id]) itemsByTicket[item.ticket_id] = [];
@@ -518,15 +531,18 @@ async function getTickets(env, stationId) {
   for (const ticket of tickets) {
     ticket.items = itemsByTicket[ticket.id] || [];
     ticket.wait_secs = Math.floor((now - new Date((ticket.created_at||'').replace(' ','T')+'Z').getTime()) / 1000);
+    // Boolean-Konversion fuer Frontend
+    ticket.is_korrektur = !!ticket.is_korrektur;
   }
   return tickets;
 }
 
 async function createTicket(env, body) {
-  const { ticket_number, table_number, station_id, station_name: bonKellner, items } = body;
+  const { ticket_number, table_number, station_id, station_name: bonKellner, items, is_korrektur } = body;
   const originalItemsJson = JSON.stringify(items || []);
-  // station_name Spalte hinzufügen falls nicht vorhanden
+  // Migrationen sicherstellen
   await env.DB.prepare('ALTER TABLE tickets ADD COLUMN kellner TEXT').run().catch(()=>{});
+  await ensureKorrekturColumns(env);
   // Duplikat-Check: gleiche ticket_number + station_id → existierendes Ticket zurückgeben
   const existing = await env.DB.prepare(
     "SELECT id, ticket_number, table_number, station_id FROM tickets WHERE ticket_number = ? AND station_id = ? AND status IN ('pending','printing')"
@@ -535,28 +551,43 @@ async function createTicket(env, body) {
     console.log('[TICKET] Duplikat ignoriert (noch aktiv):', ticket_number, 'station', station_id);
     return existing;
   }
-  const { meta } = await env.DB.prepare('INSERT INTO tickets (ticket_number, table_number, station_id, original_items, kellner) VALUES (?, ?, ?, ?, ?)').bind(ticket_number, table_number, station_id, originalItemsJson, bonKellner || null).run();
+  const isKorrInt = is_korrektur ? 1 : 0;
+  const { meta } = await env.DB.prepare('INSERT INTO tickets (ticket_number, table_number, station_id, original_items, kellner, is_korrektur) VALUES (?, ?, ?, ?, ?, ?)').bind(ticket_number, table_number, station_id, originalItemsJson, bonKellner || null, isKorrInt).run();
   const ticketId = meta.last_row_id;
   for (const item of (items || [])) {
-    await env.DB.prepare('INSERT INTO ticket_items (ticket_id, product_name, quantity, extras) VALUES (?, ?, ?, ?)').bind(ticketId, item.product_name, item.quantity, JSON.stringify(item.extras || [])).run();
+    const itemKorrInt = item.is_korrektur ? 1 : 0;
+    await env.DB.prepare('INSERT INTO ticket_items (ticket_id, product_name, quantity, extras, is_korrektur) VALUES (?, ?, ?, ?, ?)').bind(ticketId, item.product_name, item.quantity, JSON.stringify(item.extras || []), itemKorrInt).run();
   }
-  return { id: ticketId, ticket_number, table_number, station_id, items };
+  return { id: ticketId, ticket_number, table_number, station_id, items, is_korrektur: !!is_korrektur };
 }
 
 async function printTicket(env, ticketId) {
-  const ticket = await env.DB.prepare('SELECT t.*, COALESCE(t.kellner, s.name, \'BESTELLUNG\') as station_name FROM tickets t LEFT JOIN stations s ON t.station_id = s.id WHERE t.id = ?').bind(ticketId).first();
+  await ensureKorrekturColumns(env);
+  const ticket = await env.DB.prepare('SELECT t.*, COALESCE(t.is_korrektur, 0) as is_korrektur, COALESCE(t.kellner, s.name, \'BESTELLUNG\') as station_name FROM tickets t LEFT JOIN stations s ON t.station_id = s.id WHERE t.id = ?').bind(ticketId).first();
   if (!ticket) throw Object.assign(new Error('Not found'), { status: 404 });
-  const { results: items } = await env.DB.prepare('SELECT * FROM ticket_items WHERE ticket_id = ?').bind(ticketId).all();
+  const { results: items } = await env.DB.prepare('SELECT *, COALESCE(is_korrektur, 0) as is_korrektur FROM ticket_items WHERE ticket_id = ?').bind(ticketId).all();
   const originalItems = ticket.original_items ? JSON.parse(ticket.original_items) : null;
   const hadPartialPrints = originalItems && originalItems.length > 0;
-  const payload = JSON.stringify({ ticket_number: ticket.ticket_number, table_number: ticket.table_number, station_name: ticket.station_name, items: items.map(i => ({ ...i, extras: JSON.parse(i.extras || '[]') })), created_at: ticket.created_at, all_items: hadPartialPrints ? originalItems : null, is_last: hadPartialPrints, partial: hadPartialPrints, printed_at: new Date().toISOString() });
+  const payload = JSON.stringify({
+    ticket_number: ticket.ticket_number,
+    table_number: ticket.table_number,
+    station_name: ticket.station_name,
+    items: items.map(i => ({ ...i, extras: JSON.parse(i.extras || '[]'), is_korrektur: !!i.is_korrektur })),
+    created_at: ticket.created_at,
+    all_items: hadPartialPrints ? originalItems : null,
+    is_last: hadPartialPrints,
+    partial: hadPartialPrints,
+    is_korrektur: !!ticket.is_korrektur,
+    printed_at: new Date().toISOString()
+  });
   await env.DB.prepare('INSERT INTO print_jobs (ticket_id, payload) VALUES (?, ?)').bind(ticketId, payload).run();
   await env.DB.prepare("UPDATE tickets SET status = 'printing', printed_at = CURRENT_TIMESTAMP WHERE id = ?").bind(ticketId).run();
   return { ...ticket, status: 'printing' };
 }
 
 async function partialPrintTicket(env, ticketId, selectedItems) {
-  const ticket = await env.DB.prepare('SELECT t.*, COALESCE(t.kellner, s.name, \'BESTELLUNG\') as station_name FROM tickets t LEFT JOIN stations s ON t.station_id = s.id WHERE t.id = ?').bind(ticketId).first();
+  await ensureKorrekturColumns(env);
+  const ticket = await env.DB.prepare('SELECT t.*, COALESCE(t.is_korrektur, 0) as is_korrektur, COALESCE(t.kellner, s.name, \'BESTELLUNG\') as station_name FROM tickets t LEFT JOIN stations s ON t.station_id = s.id WHERE t.id = ?').bind(ticketId).first();
   if (!ticket) throw Object.assign(new Error('Not found'), { status: 404 });
   if (!selectedItems || selectedItems.length === 0) throw Object.assign(new Error('Keine Artikel'), { status: 400 });
   const { results: currentItems } = await env.DB.prepare('SELECT id, product_name, quantity FROM ticket_items WHERE ticket_id = ?').bind(ticketId).all();
@@ -574,7 +605,18 @@ async function partialPrintTicket(env, ticketId, selectedItems) {
   if (!allItemsForVon.length) { const { results: cur } = await env.DB.prepare('SELECT * FROM ticket_items WHERE ticket_id = ?').bind(ticketId).all(); allItemsForVon = cur.map(i => ({ ...i, extras: JSON.parse(i.extras || '[]') })); }
   const { results: afterRemaining } = await env.DB.prepare('SELECT id FROM ticket_items WHERE ticket_id = ?').bind(ticketId).all();
   const isLastPartial = afterRemaining.length === 0;
-  const payload = JSON.stringify({ ticket_number: ticket.ticket_number, table_number: ticket.table_number, station_name: ticket.station_name, items: selectedItems, all_items: allItemsForVon, partial: true, is_last: isLastPartial, created_at: ticket.created_at, printed_at: new Date().toISOString() });
+  const payload = JSON.stringify({
+    ticket_number: ticket.ticket_number,
+    table_number: ticket.table_number,
+    station_name: ticket.station_name,
+    items: selectedItems,
+    all_items: allItemsForVon,
+    partial: true,
+    is_last: isLastPartial,
+    is_korrektur: !!ticket.is_korrektur,
+    created_at: ticket.created_at,
+    printed_at: new Date().toISOString()
+  });
   await env.DB.prepare('INSERT INTO print_jobs (ticket_id, payload) VALUES (?, ?)').bind(ticketId, payload).run();
   if (isLastPartial) await env.DB.prepare("UPDATE tickets SET status = 'done' WHERE id = ?").bind(ticketId).run();
   return { ...ticket, partial: true };
@@ -638,4 +680,3 @@ function requireApiKey(request, env) {
   const key = request.headers.get('X-API-Key');
   if (!env.API_KEY || key !== env.API_KEY) throw Object.assign(new Error('Unauthorized'), { status: 401 });
 }
-
