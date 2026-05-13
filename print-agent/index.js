@@ -400,6 +400,7 @@ function parseTicket(lines) {
 function parseEposXml(xmlStr) {
   const items = [];
   let tableNumber = null, ticketNumber = null, datum = null, uhrzeit = null, senderName = null;
+  let isKorrektur = false;  // Storno-Flag: wird true wenn "Korr:" Praefix gefunden
 
   // ── Format 1: Bonierbon (Küchen-/Schankbon) ──────────────────────────────
   // Erkennungsmerkmal: "Bonierbon" im Header
@@ -417,7 +418,8 @@ function parseEposXml(xmlStr) {
     if (userM) senderName = userM[1].trim();
 
     // Artikel: <text width="2" height="2">1 Spritzer&#10;</text>
-    // Format: Zahl + Leerzeichen + Produktname
+    //  oder Storno: <text width="2" height="2">Korr: -1 Toast&#10;</text>
+    // Format: [Korr: ] [-]Zahl + Leerzeichen + Produktname
     const bigTextRe = /<text[^>]*width="2"[^>]*height="2"[^>]*>([^<]+)<\/text>/gi;
     let m;
     while ((m = bigTextRe.exec(xmlStr)) !== null) {
@@ -427,15 +429,28 @@ function parseEposXml(xmlStr) {
         tableNumber = txt.replace(/^Bereich:\s*/i, '').trim();
         continue;
       }
-      const itemM = txt.match(/^(\d+)\s+(.+)$/);
+      // Storno-Erkennung: "Korr:" oder "Korrektur:" Praefix
+      const korrPrefix = txt.match(/^(Korr(?:ektur)?:\s*)/i);
+      const txtClean = korrPrefix ? txt.substring(korrPrefix[0].length) : txt;
+      const isThisKorr = !!korrPrefix;
+      // Item-Regex: erlaubt jetzt auch negative Mengen (Storno)
+      const itemM = txtClean.match(/^(-?\d+)\s+(.+)$/);
       if (itemM) {
         const qty = parseInt(itemM[1]);
         const name = itemM[2].trim();
-        if (qty > 0 && qty < 1000 && name.length > 0 && name.length < 80)
-          items.push({ product_name: name, quantity: qty, extras: [] });
+        // qty !== 0 statt qty > 0 → erlaubt negative (Storno)
+        if (qty !== 0 && Math.abs(qty) < 1000 && name.length > 0 && name.length < 80) {
+          items.push({
+            product_name: name,
+            quantity: qty,
+            extras: [],
+            is_korrektur: isThisKorr
+          });
+          if (isThisKorr) isKorrektur = true;
+        }
       }
     }
-    return { items, tableNumber, ticketNumber, datum, uhrzeit, senderName };
+    return { items, tableNumber, ticketNumber, datum, uhrzeit, senderName, isKorrektur };
   }
 
   // ── Format 2: Rechnung / Barrechnung ─────────────────────────────────────
@@ -476,21 +491,32 @@ function parseEposXml(xmlStr) {
     if (/^[-─═*]{4,}$/.test(line)) continue;
     if (/Zwischensumme|^SUMME|^Gesamt|^GESAMT/i.test(line)) { inItemBlock = false; continue; }
     if (inItemBlock) {
-      const m1 = line.match(/^(\d+)\s+([^\d].+?)(?:\s{3,}.*)?$/);
+      // Korr: Praefix abfangen
+      const korrPrefix = line.match(/^(Korr(?:ektur)?:\s*)/i);
+      const lineClean = korrPrefix ? line.substring(korrPrefix[0].length) : line;
+      const isThisKorr = !!korrPrefix;
+      // Erlaubt negative Mengen
+      const m1 = lineClean.match(/^(-?\d+)\s+([^\d].+?)(?:\s{3,}.*)?$/);
       if (m1) {
         const qty = parseInt(m1[1]), name = m1[2].trimEnd();
-        if (qty>0 && qty<1000 && name.length>1 && name.length<80 && !/Rabatt|Nachlass/i.test(name))
-          { items.push({product_name:name, quantity:qty, extras:[]}); continue; }
+        if (qty !== 0 && Math.abs(qty) < 1000 && name.length>1 && name.length<80 && !/Rabatt|Nachlass/i.test(name)) {
+          items.push({ product_name: name, quantity: qty, extras: [], is_korrektur: isThisKorr });
+          if (isThisKorr) isKorrektur = true;
+          continue;
+        }
       }
-      const m2 = line.match(/^(.+?)\s{2,}(\d+)\s*$/);
+      const m2 = lineClean.match(/^(.+?)\s{2,}(-?\d+)\s*$/);
       if (m2) {
         const name = m2[1].trim(), qty = parseInt(m2[2]);
-        if (qty>0 && qty<1000 && name.length>1 && name.length<80)
-          { items.push({product_name:name, quantity:qty, extras:[]}); continue; }
+        if (qty !== 0 && Math.abs(qty) < 1000 && name.length>1 && name.length<80) {
+          items.push({ product_name: name, quantity: qty, extras: [], is_korrektur: isThisKorr });
+          if (isThisKorr) isKorrektur = true;
+          continue;
+        }
       }
     }
   }
-  return { items, tableNumber, ticketNumber, datum, uhrzeit, senderName };
+  return { items, tableNumber, ticketNumber, datum, uhrzeit, senderName, isKorrektur };
 }
 
 
@@ -527,10 +553,11 @@ async function parseAndForward(rawBuf) {
     station_id:    CFG.stationId,
     station_name:  parsed.senderName || null,
     items:         parsed.items,
+    is_korrektur:  parsed.isKorrektur || false,  // Storno-Flag fuer Worker
   };
 
-  console.log(`[PARSER] Ticket #${ticketId} | Tisch ${body.table_number} | ${body.items.length} Artikel:`);
-  parsed.items.forEach(i => console.log(`         ${i.quantity}× ${i.product_name}`));
+  console.log(`[PARSER] Ticket #${ticketId}${parsed.isKorrektur ? ' [STORNO]' : ''} | Tisch ${body.table_number} | ${body.items.length} Artikel:`);
+  parsed.items.forEach(i => console.log(`         ${i.quantity}× ${i.product_name}${i.is_korrektur ? ' [KORR]' : ''}`));
 
   try {
     const res = await fetch(`${CFG.workerUrl}/api/tickets`, {
@@ -584,6 +611,18 @@ function buildTicketBuffer(p) {
   parts.push(escBuf(ESC, 0x40));           // ESC @ – Init
   parts.push(escBuf(ESC, 0x74, 0x10));     // ESC t 16 – CP1252 (aeoeue und ss)
 
+  // ── STORNO-BANNER (ganz oben, wenn Korrektur-Bon) ──
+  if (p.is_korrektur) {
+    parts.push(escBuf(ESC, 0x61, 0x01));   // Zentriert
+    parts.push(escBuf(ESC, 0x45, 0x01));   // Bold ON
+    parts.push(escBuf(GS,  0x21, 0x11));   // Doppelte Groesse
+    txt('*** STORNO ***');
+    parts.push(escBuf(GS,  0x21, 0x00));   // Normal
+    parts.push(escBuf(ESC, 0x45, 0x00));   // Bold OFF
+    parts.push(escBuf(ESC, 0x61, 0x00));   // Links
+    line();
+  }
+
   // ── Kopfzeile ────────────────────────────────
   parts.push(escBuf(ESC, 0x61, 0x01));     // Zentriert
   parts.push(escBuf(ESC, 0x45, 0x01));     // Bold ON
@@ -608,7 +647,12 @@ function buildTicketBuffer(p) {
   for (const item of (p.items || [])) {
     parts.push(escBuf(ESC, 0x45, 0x01));   // Bold ON
     parts.push(escBuf(GS,  0x21, 0x11));   // Doppelte Größe
-    txt(`${String(item.quantity).padStart(2)}x  ${item.product_name}`);
+    // Storno-Items werden mit "STORNO" markiert
+    if (item.is_korrektur || item.quantity < 0) {
+      txt(`STORNO ${item.quantity}x ${item.product_name}`);
+    } else {
+      txt(`${String(item.quantity).padStart(2)}x  ${item.product_name}`);
+    }
     parts.push(escBuf(GS,  0x21, 0x00));   // Normal
     parts.push(escBuf(ESC, 0x45, 0x00));   // Bold OFF
 
@@ -855,7 +899,10 @@ async function pollJobs() {
           }
           // Gedruckte Artikel (die jetzt gedruckt werden)
           var printedItems = (job.payload.items||[])
-            .map(function(i){ return '## ' + i.quantity + 'x  ' + i.product_name; }).join(NL);
+            .map(function(i){
+              var prefix = (i.is_korrektur || i.quantity < 0) ? 'STORNO ' : '';
+              return '## ' + prefix + i.quantity + 'x  ' + i.product_name;
+            }).join(NL);
           // Alle Artikel des Bons (fuer EIN TEIL VON Sektion)
           var printedTot = (job.payload.items||[]).reduce(function(x,i){return x+i.quantity;},0);
           var allTot = (job.payload.all_items||[]).reduce(function(x,i){return x+i.quantity;},0);
@@ -864,7 +911,9 @@ async function pollJobs() {
             ? (job.payload.all_items||[]).map(function(i){ return String(i.quantity).padStart(2) + 'x  ' + i.product_name; }).join(NL)
             : '';
           // Preview 1:1 wie der physische Bon
+          var stornoBanner = job.payload.is_korrektur ? ('*** STORNO ***' + NL + '---' + NL) : '';
           var outPreview =
+            stornoBanner +
             'KELLNER: ' + (job.payload.station_name || 'Unbekannt') + NL +
             'Tisch ' + (job.payload.table_number || '-') + NL +
             'Bon:   #' + (job.payload.ticket_number || '?') + NL +
