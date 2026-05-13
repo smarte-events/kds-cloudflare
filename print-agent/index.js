@@ -8,6 +8,16 @@
 require('dotenv').config();
 const net  = require('net');
 const http = require('http');
+const fs   = require('fs');
+
+// ─── Zeitzone: immer Europe/Vienna (unabhängig von System-TZ) ──────────
+const TZ_VIENNA = 'Europe/Vienna';
+function fmtTime(date) {
+  return date.toLocaleTimeString('de-AT', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    timeZone: TZ_VIENNA,
+  });
+}
 
 // DNS-Override: kds.team24.training direkt auf Cloudflare Worker IP mappen
 // Umgeht DNS-Auflösungsprobleme im lokalen Netz (Worker hat kein A-Record)
@@ -40,6 +50,25 @@ const CFG = {
 };
 
 let jobCounter = 0;
+
+// ─── Doppel-Bon-Schutz: lokales Set für in-flight + bereits gedruckte Jobs ─
+// Verhindert dass Poller + WebSocket-Push denselben Job parallel drucken.
+// IDs werden für 5 Minuten behalten, dann GC'd (verhindert unbegrenztes Wachsen).
+const processedJobs = new Map();   // jobId -> timestamp
+const PROCESSED_TTL_MS = 5 * 60 * 1000;
+function isJobProcessed(jobId) {
+  return processedJobs.has(jobId);
+}
+function markJobProcessed(jobId) {
+  processedJobs.set(jobId, Date.now());
+}
+function gcProcessedJobs() {
+  const now = Date.now();
+  for (const [id, ts] of processedJobs.entries()) {
+    if (now - ts > PROCESSED_TTL_MS) processedJobs.delete(id);
+  }
+}
+setInterval(gcProcessedJobs, 60 * 1000);
 
 // ═══════════════════════════════════════════════
 //  ePOS XML → ESC/POS Buffer konvertieren
@@ -516,6 +545,7 @@ console.log('╚═════════════════════�
 console.log(`Proxy Port : ${CFG.proxyPort}`);
 console.log(`Drucker    : ${CFG.printerIp}:${CFG.printerPort}`);
 console.log(`Worker     : ${CFG.workerUrl || '(nicht konfiguriert)'}`);
+console.log(`Zeitzone   : ${TZ_VIENNA} (hartkodiert, system-unabhängig)`);
 console.log('');
 
 // ════════════════════════════════════════════════
@@ -557,7 +587,7 @@ function buildTicketBuffer(p) {
   txt(`Bon:   #${p.ticket_number}`);
   const orderTime = p.created_at ? new Date(p.created_at.replace(' ','T')+'Z') : new Date();
   const printTime = new Date();
-  const bonierZeit = orderTime.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const bonierZeit = fmtTime(orderTime);
   txt(`BONIERT: ${bonierZeit}`);
   line();
 
@@ -607,7 +637,7 @@ function buildTicketBuffer(p) {
   const durationSec = Math.round((printTime - orderTime) / 1000);
   const durationFmt = Math.floor(durationSec/60) + ':' + String(durationSec%60).padStart(2,'0');
   txt(`DAUER: ${durationFmt}`);
-  txt(`BIS GEDRUCKT UM: ${printTime.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
+  txt(`BIS GEDRUCKT UM: ${fmtTime(printTime)}`);
   br(); br(); br();
   parts.push(escBuf(GS, 0x56, 0x42, 0x00)); // Vollschnitt
 
@@ -763,8 +793,16 @@ async function logBon(type, parsed) {
   } catch(e) {}
 }
 
+// ─── Concurrency-Guard: nur 1 pollJobs() zur gleichen Zeit ─────────────
+let _pollRunning = false;
+
 async function pollJobs() {
   if (!CFG.workerUrl) return;
+  if (_pollRunning) {
+    // pollJobs läuft schon (z.B. WS-Push während Poller-Tick) – skip
+    return;
+  }
+  _pollRunning = true;
   try {
     const res  = await fetch(`${CFG.workerUrl}/api/print-jobs/pending?station=${CFG.stationId}`, {
       headers: { 'X-API-Key': CFG.apiKey },
@@ -773,6 +811,15 @@ async function pollJobs() {
 
     const jobs = await res.json();
     for (const job of jobs) {
+      // ─── Doppel-Bon-Schutz: schon verarbeitet? ─────────────────────────
+      if (isJobProcessed(job.id)) {
+        console.log(`[JOB ${job.id}] schon verarbeitet – skip`);
+        continue;
+      }
+      // Sofort markieren – verhindert Doppeldruck wenn Worker den Job
+      // beim nächsten Poll noch nicht als 'done' markiert hat.
+      markJobProcessed(job.id);
+
       console.log(`[JOB ${job.id}] Drucke #${job.payload.ticket_number}${job.payload.partial ? ' (Teildruck)' : ''}…`);
       try {
         await sendToPrinter(buildTicketBuffer(job.payload));
@@ -785,13 +832,13 @@ async function pollJobs() {
         if (CFG.workerUrl && job.payload) {
           var NL = '\n';
           var now = new Date();
-          var printTime = now.toLocaleTimeString('de-AT', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+          var printTime = fmtTime(now);
           // Eingangszeit aus job.payload (created_at des Tickets)
           var incomingTime = '';
           var durationMin = 0;
           if (job.payload.created_at) {
             var inDate = new Date(job.payload.created_at);
-            incomingTime = inDate.toLocaleTimeString('de-AT', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+            incomingTime = fmtTime(inDate);
             durationMin = Math.round((now - inDate) / 60000);
           }
           // Gedruckte Artikel (die jetzt gedruckt werden)
@@ -825,11 +872,15 @@ async function pollJobs() {
         }
       } catch (e) {
         console.error(`[JOB ${job.id}] ✗ Fehler:`, e.message);
+        // Bei Fehler: aus processedJobs entfernen damit Retry möglich
+        processedJobs.delete(job.id);
       }
     }
   } catch (e) {
     _pollDelay = Math.min((_pollDelay || 1000) * 2, 30000);
     console.error('[POLLER] Fehler (retry in ' + _pollDelay + 'ms):', e.message);
+  } finally {
+    _pollRunning = false;
   }
 }
 
@@ -925,7 +976,7 @@ if (CFG.workerUrl && CFG.apiKey) {
         console.log('[UPDATE] Neue Version gefunden – Update wird eingespielt...');
         fs.writeFileSync(__filename, newCode, 'utf8');
         console.log('[UPDATE] Neustart in 2 Sekunden...');
-        setTimeout(() => { execSync('sudo systemctl restart kds'); }, 2000);
+        setTimeout(() => { execSync('sudo systemctl restart kds-agent'); }, 2000);
       }
     } catch(e) { /* Update-Check fehlgeschlagen, ignorieren */ }
   }
@@ -954,4 +1005,3 @@ if (CFG.workerUrl && CFG.apiKey) {
 } else {
   console.log('[POLLER] Kein Worker-URL/API-Key – Poller deaktiviert');
 }
-
