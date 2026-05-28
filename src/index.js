@@ -266,6 +266,48 @@ async function handleAPI(request, env, url, method) {
       return jsonResponse(rows.results || []);
     }
 
+    // ── Reprint: Bon-Log-Eintrag 1:1 erneut drucken ─────────────────────
+    // Legt einen Roh-Druckjob (gespeicherter Bon-Text) in eine eigene Queue,
+    // die der Print-Agent zusaetzlich pollt. Bestehender print_jobs-Pfad bleibt unberuehrt.
+    const reprintMatch = path.match(/^\/bon-log\/(\d+)\/reprint$/);
+    if (reprintMatch && method === 'POST') {
+      requireApiKey(request, env);
+      const bonId = parseInt(reprintMatch[1]);
+      const body = await request.json().catch(() => ({}));
+      const station = parseInt(body.station) || 1;
+      const bon = await env.DB.prepare("SELECT id, preview, raw_text FROM bon_log WHERE id=?").bind(bonId).first().catch(() => null);
+      if (!bon) return jsonResponse({ ok: false, error: 'Bon nicht gefunden' }, 404);
+      const text = (bon.raw_text && bon.raw_text.length) ? bon.raw_text : (bon.preview || '');
+      if (!text) return jsonResponse({ ok: false, error: 'Kein Bon-Text vorhanden' }, 400);
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS reprint_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, station_id INTEGER, text TEXT, status TEXT DEFAULT 'pending', created_at TEXT, completed_at TEXT)").run();
+      await env.DB.prepare("INSERT INTO reprint_jobs (station_id, text, status, created_at) VALUES (?,?,'pending',?)")
+        .bind(station, text, new Date().toISOString()).run();
+      // Alte erledigte Reprint-Jobs aufraeumen (>1h)
+      await env.DB.prepare("DELETE FROM reprint_jobs WHERE status='done' AND completed_at < ?")
+        .bind(new Date(Date.now() - 3600000).toISOString()).run().catch(()=>{});
+      await broadcastUpdate(env, station, { type: 'print_job', stationId: station }).catch(()=>{});
+      return jsonResponse({ ok: true });
+    }
+
+    // ── Reprint-Queue: ausstehende Roh-Jobs fuer eine Station ───────────
+    if (path === '/reprint-jobs/pending' && method === 'GET') {
+      const station = parseInt(url.searchParams.get('station')) || 1;
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS reprint_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, station_id INTEGER, text TEXT, status TEXT DEFAULT 'pending', created_at TEXT, completed_at TEXT)").run().catch(()=>{});
+      const r = await env.DB.prepare("SELECT id, text FROM reprint_jobs WHERE station_id=? AND status='pending' ORDER BY id ASC")
+        .bind(station).all().catch(() => ({ results: [] }));
+      return jsonResponse(r.results || []);
+    }
+
+    // ── Reprint-Job als erledigt markieren ──────────────────────────────
+    const reprintDoneMatch = path.match(/^\/reprint-jobs\/(\d+)\/complete$/);
+    if (reprintDoneMatch && method === 'POST') {
+      requireApiKey(request, env);
+      const jobId = parseInt(reprintDoneMatch[1]);
+      await env.DB.prepare("UPDATE reprint_jobs SET status='done', completed_at=? WHERE id=?")
+        .bind(new Date().toISOString(), jobId).run().catch(()=>{});
+      return jsonResponse({ ok: true });
+    }
+
     // ── /api/stats/items-by-hour (aus tickets+ticket_items) ───────────────────
     if (path === '/stats/items-by-hour' && method === 'GET') {
       const days = parseInt(url.searchParams.get('days') || '1');
