@@ -455,6 +455,7 @@ async function vpLoad(){
       }).join('');
       return '<div class="bon-card" style="position:relative;'+stornoStyle+'">'+
         '<button class="bon-del2" style="position:absolute;top:6px;right:6px;z-index:1;background:#e8e5dd80;border-radius:50%;width:22px;height:22px;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" onclick="vpDelete('+b.id+')" title="Loeschen">&times;</button>'+
+        '<button class="bon-reprint2" style="position:absolute;top:6px;right:34px;z-index:1;background:#2563eb;color:#fff;border:none;border-radius:11px;height:22px;padding:0 9px;font-size:12px;font-weight:700;display:flex;align-items:center;gap:3px;cursor:pointer" onclick="vpReprint('+b.id+',this)" title="Bon nochmal drucken">🖨</button>'+
         stornoBadgeHtml+
         '<div class="bon-body2">'+bodyHtml+'</div>'+
         '<div class="bon-cut"></div>'+
@@ -466,6 +467,14 @@ async function vpLoad(){
 async function vpTogglePlay(){VP.paused=!VP.paused;vpUpdatePlayBtn();await fetch('/api/bons/state',{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':API_KEY},body:JSON.stringify({paused:VP.paused})});}
 function vpUpdatePlayBtn(){const btn=document.getElementById('vpPlay');const icon=document.getElementById('vpPlayIcon');const lbl=document.getElementById('vpPlayLabel');if(VP.paused){btn.className='vp-play paused';icon.textContent='⏸';lbl.textContent='PAUSIERT';}else{btn.className='vp-play playing';icon.textContent='▶';lbl.textContent='AKTIV';}}
 async function vpDelete(id){await fetch('/api/bons/'+id,{method:'DELETE',headers:{'X-API-Key':API_KEY}});vpLoad();}
+async function vpReprint(id,btn){
+  if(btn){btn.disabled=true;btn.textContent='⏳';}
+  try{
+    var r=await fetch('/api/bon-log/'+id+'/reprint',{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':API_KEY},body:JSON.stringify({station:S.station||1})});
+    var d=await r.json().catch(function(){return{};});
+    if(btn){btn.textContent=d&&d.ok?'✓':'✗';setTimeout(function(){btn.disabled=false;btn.textContent='🖨';},1500);}
+  }catch(e){if(btn){btn.textContent='✗';setTimeout(function(){btn.disabled=false;btn.textContent='🖨';},1500);}}
+}
 function vpStartTimer(){if(VP.timer)clearInterval(VP.timer);VP.timer=setInterval(vpLoad,5000);}
 
 function sv(v){
