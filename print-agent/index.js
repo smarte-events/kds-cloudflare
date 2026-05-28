@@ -700,6 +700,32 @@ function buildTicketBuffer(p) {
   return Buffer.concat(parts);
 }
 
+// ── Reprint: rohen Bon-Text 1:1 in Druck-Buffer rendern ────────────────
+// Nimmt den gespeicherten Bon-Text (preview/raw_text) und druckt ihn Zeile
+// fuer Zeile mit denselben Init-/Cut-Sequenzen wie buildTicketBuffer.
+function buildRawBuffer(rawText) {
+  const parts = [];
+  const txt = (s) => parts.push(Buffer.from(s + '\n', 'latin1'));
+  parts.push(escBuf(ESC, 0x40));        // ESC @ – Init
+  parts.push(escBuf(ESC, 0x74, 0x10));  // CP1252
+  const lines = String(rawText || '').split('\n');
+  for (const l of lines) {
+    // "## Artikel"-Zeilen fett + groesser (wie im Original-Bon)
+    if (l.indexOf('## ') === 0) {
+      parts.push(escBuf(ESC, 0x45, 0x01)); // Bold ON
+      txt(l.slice(3));
+      parts.push(escBuf(ESC, 0x45, 0x00)); // Bold OFF
+    } else if (l === '---' || /^[-=]{3,}$/.test(l)) {
+      txt('-'.repeat(Math.min(CFG.charsPerLine, 48)));
+    } else {
+      txt(l);
+    }
+  }
+  parts.push(Buffer.from('\n\n\n'));
+  parts.push(escBuf(GS, 0x56, 0x42, 0x00)); // Vollschnitt
+  return Buffer.concat(parts);
+}
+
 // ── Drucker-Port prüfen ────────────────────────────────────────────────
 function checkPrinterPort(ip, port, timeoutMs) {
   return new Promise((resolve) => {
@@ -936,6 +962,34 @@ async function pollJobs() {
         // Bei Fehler: aus processedJobs entfernen damit Retry möglich
         processedJobs.delete(job.id);
       }
+    }
+
+    // ─── Reprint-Queue: 1:1-Nachdrucke abarbeiten ──────────────────────
+    try {
+      const rRes = await fetch(`${CFG.workerUrl}/api/reprint-jobs/pending?station=${CFG.stationId}`, {
+        headers: { 'X-API-Key': CFG.apiKey },
+      });
+      if (rRes.ok) {
+        const rJobs = await rRes.json();
+        for (const rj of rJobs) {
+          const rpId = 'rp-' + rj.id;
+          if (isJobProcessed(rpId)) continue;   // Doppel-Schutz (gleiche Map/TTL)
+          markJobProcessed(rpId);
+          console.log(`[REPRINT ${rj.id}] Drucke Bon erneut…`);
+          try {
+            await sendToPrinter(buildRawBuffer(rj.text));
+            await fetch(`${CFG.workerUrl}/api/reprint-jobs/${rj.id}/complete`, {
+              method: 'POST', headers: { 'X-API-Key': CFG.apiKey },
+            });
+            console.log(`[REPRINT ${rj.id}] ✓ Gedruckt`);
+          } catch (e) {
+            console.error(`[REPRINT ${rj.id}] ✗ Fehler:`, e.message);
+            processedJobs.delete(rpId);   // Retry beim naechsten Poll erlauben
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[REPRINT] Poll-Fehler:', e.message);
     }
   } catch (e) {
     _pollDelay = Math.min((_pollDelay || 1000) * 2, 30000);
