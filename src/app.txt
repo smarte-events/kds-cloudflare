@@ -536,6 +536,8 @@ function rOrders(){
   });
   ta.innerHTML='';ta.appendChild(g);
   ta.scrollTop=_prevScroll;
+  // DEBUG: Scroll-Status loggen (per F12 Console sichtbar)
+  console.log('[SCROLL-DEBUG rOrders] tickets:',S.tickets.length,'| clientH:',ta.clientHeight,'| scrollH:',ta.scrollHeight,'| scrollable:',ta.scrollHeight>ta.clientHeight,'| scrollTop:',ta.scrollTop);
 }
 
 function rProducts(){
