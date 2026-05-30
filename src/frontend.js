@@ -348,9 +348,18 @@ export function getHTML() {
   .pip-inp:focus{border-color:var(--amber)}
   .pip-btn{background:transparent;border:1px solid var(--brd);color:var(--muted);padding:4px 7px;border-radius:5px;cursor:pointer;font-size:13px;transition:all .15s}
   .pip-btn:hover{border-color:var(--green);color:var(--green)}
-  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar{width:12px;height:12px}
   ::-webkit-scrollbar-track{background:transparent}
-  ::-webkit-scrollbar-thumb{background:var(--brd2);border-radius:3px}
+  ::-webkit-scrollbar-thumb{background:var(--brd2);border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:var(--amber);background-clip:padding-box;border:2px solid transparent}
+
+  /* Touch-Scroll-Haertung: explizit Wischen erlauben, Scroll-Chaining stoppen */
+  .ta,#tickets,.totals-list,.pv,#virtView,.modal,
+  .hist-list,#vp-view,.vp-bons,#diagView{
+    -webkit-overflow-scrolling:touch;
+    touch-action:pan-y;
+    overscroll-behavior:contain;
+  }
 </style>
 </head>
 <body>
