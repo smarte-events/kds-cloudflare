@@ -414,6 +414,9 @@ async function vpLoad(){
     var state=await sRes.json();
     VP.paused=state.paused||false; vpUpdatePlayBtn();
     var el=document.getElementById('vpBons');
+    var _vpOuter=document.getElementById('vp-view');
+    var _prevScrollInner=el?el.scrollTop:0;
+    var _prevScrollOuter=_vpOuter?_vpOuter.scrollTop:0;
     if(!bons||!bons.length){el.innerHTML='<div class="vp-empty">Keine Bons vorhanden</div>';return;}
     el.innerHTML='<div class="bon-list2">'+bons.map(function(b){
       var t=new Date(b.created_at);
@@ -461,6 +464,8 @@ async function vpLoad(){
         '<div class="bon-cut"></div>'+
       '</div>';
     }).join('')+'</div>';
+    if(el) el.scrollTop=_prevScrollInner;
+    if(_vpOuter) _vpOuter.scrollTop=_prevScrollOuter;
   }catch(e){document.getElementById('vpBons').innerHTML='<div class="vp-empty">Fehler</div>';}
 }
 
@@ -496,6 +501,7 @@ function render(){S.view==='orders'?rOrders():rProducts();}
 
 function rOrders(){
   const ta=document.getElementById('tickets');
+  const _prevScroll=ta.scrollTop;
   if(!S.tickets.length){ta.innerHTML='<div class="empty"><div class="empty-i">✓</div><div class="empty-t">Keine offenen Bons</div></div>';return;}
   const g=document.createElement('div');g.className='og';
 
@@ -529,10 +535,12 @@ function rOrders(){
     g.appendChild(card);
   });
   ta.innerHTML='';ta.appendChild(g);
+  ta.scrollTop=_prevScroll;
 }
 
 function rProducts(){
   const ta=document.getElementById('tickets');
+  const _prevScroll=ta.scrollTop;
   const map={};
   S.tickets.forEach(t=>t.items.forEach(i=>{if(!map[i.product_name])map[i.product_name]=[];map[i.product_name].push({table:t.table_number,qty:i.quantity});}));
 
@@ -547,7 +555,7 @@ function rProducts(){
     const emp=document.createElement('div');emp.className='empty';
     emp.innerHTML='<div class="empty-i">✓</div><div class="empty-t">Keine offenen Produkte</div>';
     wrap.appendChild(emp);
-    ta.innerHTML='';ta.appendChild(wrap);return;
+    ta.innerHTML='';ta.appendChild(wrap);ta.scrollTop=_prevScroll;return;
   }
 
   const grid=document.createElement('div');grid.className='pv';
@@ -605,6 +613,7 @@ function rProducts(){
   });
   wrap.appendChild(grid);
   ta.innerHTML='';ta.appendChild(wrap);
+  ta.scrollTop=_prevScroll;
 }
 
 function renderTot(){
