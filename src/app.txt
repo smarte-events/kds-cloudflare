@@ -752,6 +752,50 @@ async function prt(id){
 
 async function don(id){await fetch('/api/tickets/'+id+'/done',{method:'POST'});await Promise.all([loadT(),loadTot()]);}
 
+// ═══════════════════════════════════════════════════════
+//  SCROLL-DEBUG-OVERLAY + TOUCH-FALLBACK
+// ═══════════════════════════════════════════════════════
+function updateScrollDbg(){
+  var dbg=document.getElementById('scrollDbg'); if(!dbg) return;
+  var t=document.getElementById('tickets'); if(!t){dbg.textContent='no #tickets';return;}
+  var ua=navigator.userAgent;
+  var dev=/Android/i.test(ua)?'AND':/iPhone|iPad|iPod/i.test(ua)?'iOS':/Windows/i.test(ua)?'WIN':/Linux/i.test(ua)?'LIN':'?';
+  var dvh=window.innerHeight;
+  dbg.innerHTML=dev+' '+window.screen.width+'x'+window.screen.height+' iH:'+dvh+
+    '<br>#tickets cH:'+t.clientHeight+' sH:'+t.scrollHeight+
+    '<br>scrollable:'+(t.scrollHeight>t.clientHeight?'JA✓':'NEIN✗')+' top:'+t.scrollTop+
+    '<br>bons:'+(S&&S.tickets?S.tickets.length:0)+' touch:'+('ontouchstart' in window?'JA':'NEIN');
+}
+// Touch-Fallback: Falls Browser-Touch-Scrolling NICHT greift, manuell via JS scrollen
+function attachTouchScroll(el){
+  if(!el || el._touchScrollAttached) return;
+  el._touchScrollAttached=true;
+  var startY=0, startScroll=0, active=false;
+  el.addEventListener('touchstart',function(e){
+    if(e.touches.length!==1) return;
+    startY=e.touches[0].clientY; startScroll=el.scrollTop; active=true;
+  },{passive:true});
+  el.addEventListener('touchmove',function(e){
+    if(!active||e.touches.length!==1) return;
+    var dy=startY-e.touches[0].clientY;
+    el.scrollTop=startScroll+dy;
+  },{passive:true});
+  el.addEventListener('touchend',function(){active=false;},{passive:true});
+  el.addEventListener('touchcancel',function(){active=false;},{passive:true});
+}
+function bootScrollFallback(){
+  attachTouchScroll(document.getElementById('tickets'));
+  attachTouchScroll(document.getElementById('vp-view'));
+  attachTouchScroll(document.getElementById('vpBons'));
+  attachTouchScroll(document.querySelector('.hist-list'));
+  updateScrollDbg();
+  setInterval(updateScrollDbg, 2000);
+  // Bei jedem Resize/Orientation neu messen
+  window.addEventListener('resize',updateScrollDbg);
+  window.addEventListener('orientationchange',function(){setTimeout(updateScrollDbg,300);});
+}
+setTimeout(bootScrollFallback, 500);
+
 init();
 
 // ═══════════════════════════════════════════════════════
