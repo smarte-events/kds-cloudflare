@@ -543,8 +543,6 @@ function rOrders(){
   g.appendChild(spacer);
   ta.innerHTML='';ta.appendChild(g);
   ta.scrollTop=_prevScroll;
-  // DEBUG: Scroll-Status loggen (per F12 Console sichtbar)
-  console.log('[SCROLL-DEBUG rOrders] tickets:',S.tickets.length,'| clientH:',ta.clientHeight,'| scrollH:',ta.scrollHeight,'| scrollable:',ta.scrollHeight>ta.clientHeight,'| scrollTop:',ta.scrollTop);
 }
 
 function rProducts(){
@@ -760,20 +758,32 @@ async function prt(id){
 async function don(id){await fetch('/api/tickets/'+id+'/done',{method:'POST'});await Promise.all([loadT(),loadTot()]);}
 
 // ═══════════════════════════════════════════════════════
-//  SCROLL-DEBUG-OVERLAY + TOUCH-FALLBACK
+//  HARD-RELOAD (Cache + ServiceWorker leeren, dann reload)
 // ═══════════════════════════════════════════════════════
-function updateScrollDbg(){
-  var dbg=document.getElementById('scrollDbg'); if(!dbg) return;
-  var t=document.getElementById('tickets'); if(!t){dbg.textContent='no #tickets';return;}
-  var ua=navigator.userAgent;
-  var dev=/Android/i.test(ua)?'AND':/iPhone|iPad|iPod/i.test(ua)?'iOS':/Windows/i.test(ua)?'WIN':/Linux/i.test(ua)?'LIN':'?';
-  var dvh=window.innerHeight;
-  dbg.innerHTML=dev+' '+window.screen.width+'x'+window.screen.height+' iH:'+dvh+
-    '<br>#tickets cH:'+t.clientHeight+' sH:'+t.scrollHeight+
-    '<br>scrollable:'+(t.scrollHeight>t.clientHeight?'JA✓':'NEIN✗')+' top:'+t.scrollTop+
-    '<br>bons:'+(S&&S.tickets?S.tickets.length:0)+' touch:'+('ontouchstart' in window?'JA':'NEIN');
+async function hardReload(){
+  var wrap=document.querySelector('.reload-wrap');
+  if(wrap) wrap.classList.add('reloading');
+  try {
+    // 1. Cache API leeren (PWA-Caches)
+    if('caches' in window){
+      var keys=await caches.keys();
+      await Promise.all(keys.map(function(k){return caches.delete(k);}));
+    }
+    // 2. ServiceWorker abmelden
+    if('serviceWorker' in navigator){
+      var regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(function(r){return r.unregister();}));
+    }
+  } catch(e){ /* egal — wir laden trotzdem neu */ }
+  // 3. Cache-Buster an URL und reload
+  var u=new URL(location.href);
+  u.searchParams.set('_r', Date.now());
+  location.replace(u.toString());
 }
-// Touch-Fallback: Falls Browser-Touch-Scrolling NICHT greift, manuell via JS scrollen
+
+// ═══════════════════════════════════════════════════════
+//  TOUCH-SCROLL-FALLBACK (für problematische Touchscreens)
+// ═══════════════════════════════════════════════════════
 function attachTouchScroll(el){
   if(!el || el._touchScrollAttached) return;
   el._touchScrollAttached=true;
@@ -795,15 +805,6 @@ function bootScrollFallback(){
   attachTouchScroll(document.getElementById('vp-view'));
   attachTouchScroll(document.getElementById('vpBons'));
   attachTouchScroll(document.querySelector('.hist-list'));
-  // Debug-Overlay nur bei ?debug=1 in URL anzeigen
-  var dbgEl=document.getElementById('scrollDbg');
-  if(dbgEl && location.search.indexOf('debug=1')>=0){
-    dbgEl.style.display='block';
-    updateScrollDbg();
-    setInterval(updateScrollDbg, 2000);
-  }
-  window.addEventListener('resize',updateScrollDbg);
-  window.addEventListener('orientationchange',function(){setTimeout(updateScrollDbg,300);});
 }
 setTimeout(bootScrollFallback, 500);
 
