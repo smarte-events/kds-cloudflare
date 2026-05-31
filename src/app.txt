@@ -534,6 +534,13 @@ function rOrders(){
     card.innerHTML='<div class="tc-head"><div>'+stornoBadge+'<div class="tc-num">#'+t.ticket_number+'</div><div class="tc-tbl">'+(t.table_number?t.table_number:'Bon #'+t.ticket_number)+'</div></div><div style="display:flex;align-items:center;gap:6px"><span class="tc-wait '+urg+'">'+t.wait_mins+'min</span>'+(t.station_color?'<span class="s-badge" style="background:'+t.station_color+'22;color:'+t.station_color+';border:1px solid '+t.station_color+'44">'+t.station_name+'</span>':'')+'</div></div><div class="tc-items">'+itemsHtml+'</div><div class="tc-foot"><button class="btn-p" onclick="prt('+t.id+')" '+(t.status==='printing'?'disabled':'')+'>🖨 '+(t.status==='printing'?'Druckt…':'Drucken')+'</button><button class="btn-partial" id="bp-'+t.id+'" onclick="partPrt('+t.id+')" '+(hasSel?'':'disabled')+'>✂ Teildruck</button></div>';
     g.appendChild(card);
   });
+  // Bottom-Spacer: macht den Inhalt IMMER minimal höher als Container,
+  // damit "scrollable:JA" und Wisch-Geste auch bei wenig Bons funktioniert.
+  // Nutzer wischt → Bouncezone sichtbar, Browser-Touch wird aktiviert.
+  const spacer=document.createElement('div');
+  spacer.style.cssText='height:60px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;opacity:.6;grid-column:1/-1;margin-top:8px';
+  spacer.textContent='— '+S.tickets.length+' '+(S.tickets.length===1?'Bon':'Bons')+' —';
+  g.appendChild(spacer);
   ta.innerHTML='';ta.appendChild(g);
   ta.scrollTop=_prevScroll;
   // DEBUG: Scroll-Status loggen (per F12 Console sichtbar)
@@ -788,9 +795,13 @@ function bootScrollFallback(){
   attachTouchScroll(document.getElementById('vp-view'));
   attachTouchScroll(document.getElementById('vpBons'));
   attachTouchScroll(document.querySelector('.hist-list'));
-  updateScrollDbg();
-  setInterval(updateScrollDbg, 2000);
-  // Bei jedem Resize/Orientation neu messen
+  // Debug-Overlay nur bei ?debug=1 in URL anzeigen
+  var dbgEl=document.getElementById('scrollDbg');
+  if(dbgEl && location.search.indexOf('debug=1')>=0){
+    dbgEl.style.display='block';
+    updateScrollDbg();
+    setInterval(updateScrollDbg, 2000);
+  }
   window.addEventListener('resize',updateScrollDbg);
   window.addEventListener('orientationchange',function(){setTimeout(updateScrollDbg,300);});
 }
