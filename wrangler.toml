@@ -8,7 +8,8 @@ compatibility_flags = ["nodejs_compat"]
 routes = [
   { pattern = "monitor1.team24.training", custom_domain = true },
   { pattern = "monitor2.team24.training", custom_domain = true },
-  { pattern = "monitor3.smarte.events", custom_domain = true }
+  { pattern = "monitor3.smarte.events", custom_domain = true },
+  { pattern = "monitor4.smarte.events", custom_domain = true }
 ]
 
 # ─── D1 Datenbank ───────────────────────────────────────────
