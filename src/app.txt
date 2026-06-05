@@ -596,7 +596,7 @@ function rProducts(){
     const mySlot=pin?pin.slot:null;
     var pinColor = color || '#f59e0b';
     // Neues Layout: Footer mit ◀ [📌 Farbe] ▶ — immer sichtbar
-    g.innerHTML='<div class="pgh"><div class="pgn">'+n+'</div><div class="pgt">'+(isZero?'':Math.round(tot))+'</div></div>'
+    g.innerHTML='<div class="pgh"><div class="pgn">'+n+'</div><div class="pgt">'+(isZero?'0':Math.round(tot))+'</div></div>'
       +'<div class="pg-footer">'
         +(isPinned?'<button class="move-btn left" title="Nach links">◀</button>':'<div style="width:38px"></div>')
         +'<div class="pg-center">'
