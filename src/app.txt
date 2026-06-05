@@ -558,7 +558,7 @@ function rProducts(){
   hdr.innerHTML='<span class="pv-bons-num">'+S.tickets.length+'</span><span class="pv-bons-lbl">Offene&nbsp;Bons</span>';
   wrap.appendChild(hdr);
 
-  if(!Object.keys(map).length){
+  if(!Object.keys(map).length && !Object.keys(PINS).length){
     const emp=document.createElement('div');emp.className='empty';
     emp.innerHTML='<div class="empty-i">✓</div><div class="empty-t">Keine offenen Produkte</div>';
     wrap.appendChild(emp);
