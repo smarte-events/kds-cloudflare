@@ -266,13 +266,44 @@ window.addEventListener('resize',applyT);
   }, 30000);
 })();
 
-// Pins: {name: {slot, color}} – localStorage
+// Pins: {name: {slot, color}} – Server (DB pro Station) + localStorage als Cache
 const PINS = JSON.parse(localStorage.getItem('kds_pins') || '{}');
-function savePins(){ localStorage.setItem('kds_pins', JSON.stringify(PINS)); }
-
 // Farben für ALLE Produkte (auch nicht-gepinnte) – bleiben erhalten
 const COLORS = JSON.parse(localStorage.getItem('kds_colors') || '{}');
-function saveColors(){ localStorage.setItem('kds_colors', JSON.stringify(COLORS)); }
+
+// Pins+Farben zum Server schreiben (debounced) + localStorage-Cache
+let _pinSaveTimer=null;
+function _pushPinsToServer(){
+  if(_pinSaveTimer) clearTimeout(_pinSaveTimer);
+  _pinSaveTimer=setTimeout(()=>{
+    fetch(S.station?'/api/pins?station='+S.station:'/api/pins',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-API-Key':API_KEY},
+      body:JSON.stringify({pins:PINS,colors:COLORS})
+    }).catch(()=>{});
+  },400);
+}
+function savePins(){ localStorage.setItem('kds_pins', JSON.stringify(PINS)); _pushPinsToServer(); }
+function saveColors(){ localStorage.setItem('kds_colors', JSON.stringify(COLORS)); _pushPinsToServer(); }
+
+// Beim Start: Pins+Farben vom Server laden (überschreibt lokalen Cache)
+async function loadPinsFromServer(){
+  try{
+    const r=await fetch(S.station?'/api/pins?station='+S.station:'/api/pins');
+    if(!r.ok) return;
+    const d=await r.json();
+    if(d && typeof d==='object'){
+      // PINS in-place ersetzen (const-Referenz beibehalten)
+      Object.keys(PINS).forEach(k=>delete PINS[k]);
+      Object.assign(PINS, d.pins||{});
+      Object.keys(COLORS).forEach(k=>delete COLORS[k]);
+      Object.assign(COLORS, d.colors||{});
+      localStorage.setItem('kds_pins', JSON.stringify(PINS));
+      localStorage.setItem('kds_colors', JSON.stringify(COLORS));
+      if(S.view==='products') rProducts();
+    }
+  }catch(e){/* offline: lokaler Cache bleibt */}
+}
 
 function movePin(name, dir) {
   if (!PINS[name]) return;
@@ -331,6 +362,7 @@ function applyPinColor(card, color) {
 }
 
 async function init(){
+  await loadPinsFromServer();
   await Promise.all([loadT(),loadTot()]);
   connectWS();
   setInterval(loadT,15000); // Alle 15s statt 30s für schnelleres Recover
