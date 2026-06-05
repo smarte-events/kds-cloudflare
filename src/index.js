@@ -211,6 +211,27 @@ async function handleAPI(request, env, url, method) {
       return jsonResponse({ ok: true });
     }
 
+    if (path === '/pins' && method === 'GET') {
+      const stationParam = url.searchParams.get('station');
+      const pinsKey = stationParam ? 'pins_' + stationParam : 'pins';
+      const row = await env.DB.prepare('SELECT value FROM kv_store WHERE key=?').bind(pinsKey).first().catch(() => null);
+      return jsonResponse(row ? JSON.parse(row.value) : { pins: {}, colors: {} });
+    }
+
+    if (path === '/pins' && method === 'POST') {
+      requireApiKey(request, env);
+      const body = await request.json();
+      const val = JSON.stringify({ pins: body.pins || {}, colors: body.colors || {} });
+      const stationPostParam = url.searchParams.get('station') || body.stationId;
+      const pinsKeyPost = stationPostParam ? 'pins_' + stationPostParam : 'pins';
+      await env.DB.prepare('INSERT INTO kv_store (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+        .bind(pinsKeyPost, val).run().catch(async () => {
+          await env.DB.prepare('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)').run();
+          await env.DB.prepare('INSERT INTO kv_store (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(pinsKeyPost, val).run();
+        });
+      return jsonResponse({ ok: true });
+    }
+
     if (path === '/test-print' && method === 'POST') {
       requireApiKey(request, env);
       const row = await env.DB.prepare("SELECT value FROM kv_store WHERE key='printer_config'").first().catch(() => null);
