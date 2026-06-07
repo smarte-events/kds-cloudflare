@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
-  "build": "20260415-001",
-  "date": "2026-04-15",
-  "notes": "Stabilitaet, Performance, Offline-Anzeige, DB-Cleanup"
+  "version": "1.2.1",
+  "build": "20260607-001",
+  "date": "2026-06-07",
+  "notes": "Vorfall-Doku Event-Ausfall 06.06.: version_upload ohne STORAGE-Binding war Ursache. Rollback auf c8d43251. Regel: nur wrangler deploy aus Repo, nie nackter version_upload."
 }

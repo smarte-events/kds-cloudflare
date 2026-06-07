@@ -1,5 +1,32 @@
 # KDS Küchenmonitor – Changelog
 
+## v1.2.1 – 2026-06-07
+
+### 🔥 Vorfall: Event-Ausfall 06.06.2026 (22:20 Ortszeit / 20:20 UTC)
+Waehrend eines Events fielen beide aktiven Monitore GLEICHZEITIG aus –
+ab 20:20:21 UTC kamen 0 Tickets mehr an. Backup-Drucker (direkt am LAN) lief weiter.
+
+**Ursache (bewiesen):** Ein Deployment um 20:20:21 UTC mit Source "version_upload"
+(also KEIN `wrangler deploy` aus dem Repo, sondern ein nackter API-Upload via Paperclip)
+lud Worker-Version 2295b93f hoch und verlor dabei gegenueber der letzten guten
+Version (c8d43251, 18:35):
+- **R2-Binding `STORAGE` fehlte komplett**
+- compatibility_date von 2025-01-01 auf 2024-09-23 zurueckgesetzt
+
+Displays blieben "online/gruen" (GET-Heartbeats brauchen die Binding nicht),
+nur die Ticket-POSTs schlugen fehl. Beide Monitore betroffen, weil EIN gemeinsamer Worker.
+
+### ✅ Behoben
+- **Rollback** auf gute Version c8d43251 via `wrangler rollback` → STORAGE-Binding +
+  compat_date wiederhergestellt, System laeuft wieder auf allen Monitoren.
+- Live-Stand des Workers gesichert (Frontend + Server-Bundle) als Referenzabzug.
+
+### 📌 Lehre / Regel
+- **NIE per nacktem version_upload deployen.** Immer `wrangler deploy` aus dem Repo,
+  damit ALLE Bindings (DB, KDS_ROOM, STORAGE) + compat_date aus wrangler.toml kommen.
+- Bei Problemen: `wrangler rollback <version-id>` → letzte gute Version in Sekunden.
+- `wrangler deployments list` zeigt die Historie mit Zeitstempeln.
+
 ## v1.2.0 – 2026-04-15
 
 ### 🐛 Bugfixes
