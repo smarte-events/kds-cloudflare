@@ -2,7 +2,8 @@
 //  Frontend HTML
 // ════════════════════════════════════════════════
 
-export function getHTML() {
+export function getHTML(appVersion) {
+  const VERSION = appVersion || '?';
   return `<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
@@ -41,6 +42,7 @@ export function getHTML() {
   .mon-info{display:flex;flex-direction:column;line-height:1.25}
   .mon-host{font-size:13px;font-weight:700;color:var(--amber);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
   .mon-ip{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .mon-ver{font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.6}
 
   .rot-grp{display:flex;gap:3px}
   .rot-btn{background:transparent;border:1px solid var(--brd);color:var(--muted);padding:5px 9px;border-radius:5px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center}
@@ -375,6 +377,7 @@ export function getHTML() {
     <div class="mon-info">
       <div class="mon-host" id="mHost">–</div>
       <div class="mon-ip"   id="mIp">–.–.–.–</div>
+      <div class="mon-ver" id="mVer">v${VERSION}</div>
     </div>
         <button class="cfg-btn" onclick="openCfg()" title="Drucker-Konfiguration">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">

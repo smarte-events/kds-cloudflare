@@ -1,5 +1,20 @@
 # KDS Küchenmonitor – Changelog
 
+## v1.3.0 – 2026-06-07
+
+### ✨ Features
+- **Versionsnummer im Header** – aktuelle App-Version (z.B. "v1.3.0") wird neben
+  Monitor-Name/IP angezeigt (kommt aus version.json via getHTML).
+- **Bestellungsansicht: Test-Bon-Button** – zeigt 3 Beispiel-Bons zum Testen von
+  Layout/Schriftgröße ohne echte Bestellungen.
+- **Bestellungsansicht: Schriftgrößen-Regler** – −/+ Regler skaliert die Bon-Schrift
+  (Tischname, Menge, Produktname, Bon-Nr). EIGENER, getrennter Wert (`kds_order_scale`),
+  unabhängig von der Produktansicht-Skalierung.
+
+### 🔧 Repo-Hygiene
+- Live-Frontend-Stand (`app.txt` mit Zoom/Test der Produktansicht) ins Repo übernommen –
+  Repo und Live-Worker waren beim Frontend auseinandergelaufen, jetzt wieder synchron.
+
 ## v1.2.1 – 2026-06-07
 
 ### 🔥 Vorfall: Event-Ausfall 06.06.2026 (22:20 Ortszeit / 20:20 UTC)

@@ -5,6 +5,7 @@ import { KDSRoom }    from './kds-room.js';
 import { getHTML }    from './frontend.js';
 import appJs from './app.txt';
 import { getPrinterHTML } from './printer.js';
+import versionInfo from '../version.json';
 
 export { KDSRoom };
 
@@ -84,7 +85,7 @@ export default {
     }
 
     // Beide Domains → gleiches Frontend (Bestellungen + Produkte + Virtuell)
-    return new Response(getHTML(), {
+    return new Response(getHTML(versionInfo.version), {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
   },
